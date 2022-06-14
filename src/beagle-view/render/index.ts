@@ -16,15 +16,21 @@
 
 import Tree from 'beagle-tree'
 import logger from 'logger'
-import { ActionHandler } from 'action/types'
-import { BeagleUIElement, DataContext, IdentifiableBeagleUIElement, TreeInsertionMode, TreeUpdateMode } from 'beagle-tree/types'
-import { ExecutionMode, Lifecycle, LifecycleHookMap, Operation } from 'service/beagle-service/types'
-import { BeagleView } from 'beagle-view/types'
-import { ChildrenMetadataMap, ComponentTypeMetadata } from 'metadata/types'
-import { ComponentManager, TemplateManager } from 'beagle-view/render/template-manager/types'
-import { getEvaluatedTemplate } from 'beagle-view/render/template-manager'
+import {ActionHandler} from 'action/types'
+import {
+  BeagleUIElement,
+  DataContext,
+  IdentifiableBeagleUIElement,
+  TreeInsertionMode,
+  TreeUpdateMode
+} from 'beagle-tree/types'
+import {ExecutionMode, Lifecycle, LifecycleHookMap, Operation} from 'service/beagle-service/types'
+import {BeagleView} from 'beagle-view/types'
+import {ChildrenMetadataMap, ComponentTypeMetadata} from 'metadata/types'
+import {ComponentManager, TemplateManager} from 'beagle-view/render/template-manager/types'
+import {getEvaluatedTemplate} from 'beagle-view/render/template-manager'
 import BeagleParseError from 'error/BeagleParseError'
-import { Renderer } from './types'
+import {Renderer} from './types'
 import Component from './component'
 import Expression from './expression'
 import Action from './action'
@@ -46,19 +52,19 @@ interface Params {
 }
 
 function createRenderer({
-  beagleView,
-  setTree,
-  typesMetadata,
-  renderToScreen,
-  lifecycleHooks,
-  childrenMetadata,
-  // this is not currently being used. It's ok to set it to whatever value
-  executionMode = 'production',
-  actionHandlers,
-  operationHandlers,
-  disableCssTransformation,
-}: Params): Renderer {
-  const { globalContext } = beagleView.getBeagleService()
+                          beagleView,
+                          setTree,
+                          typesMetadata,
+                          renderToScreen,
+                          lifecycleHooks,
+                          childrenMetadata,
+                          // this is not currently being used. It's ok to set it to whatever value
+                          executionMode = 'production',
+                          actionHandlers,
+                          operationHandlers,
+                          disableCssTransformation,
+                        }: Params): Renderer {
+  const {globalContext} = beagleView.getBeagleService()
 
   function runGlobalLifecycleHook(viewTree: any = {}, lifecycle: Lifecycle) {
     if (Object.keys(viewTree).length === 0) return viewTree
@@ -105,9 +111,14 @@ function createRenderer({
     anchor: string,
     mode: TreeUpdateMode,
   ) {
+    let start = new Date().getTime()
     let currentTree = beagleView.getTree()
 
-    if (!currentTree) return setTree(viewTree)
+    if (!currentTree) {
+      setTree(viewTree)
+      console.log("Take view snapshot took " + (new Date().getTime() - start) + "ms")
+      return viewTree
+    }
 
     anchor = anchor || currentTree.id
 
@@ -119,12 +130,15 @@ function createRenderer({
     }
 
     setTree(currentTree)
+    console.log("Take view snapshot took " + (new Date().getTime() - start) + "ms")
+    return currentTree
   }
 
   function evaluateComponents(viewTree: IdentifiableBeagleUIElement) {
+    let start = new Date().getTime()
     const localContexts = beagleView.getLocalContexts().getAllAsDataContext()
     const contextMap = Context.evaluate(viewTree, [globalContext.getAsDataContext(), ...localContexts])
-    return Tree.replaceEach(viewTree, (component) => {
+    let result = Tree.replaceEach(viewTree, (component) => {
       Action.deserialize({
         component,
         contextHierarchy: contextMap[component.id],
@@ -137,34 +151,42 @@ function createRenderer({
 
       return resolved
     })
+
+    let end = new Date().getTime()
+    console.log("Evaluate components took " + (end - start) + "ms")
+    return result
   }
 
   function checkTypes(viewTree: IdentifiableBeagleUIElement) {
+    let start = new Date().getTime()
     if (executionMode !== 'development') return
     Tree.forEach(viewTree, component => (
       TypeChecker.check(component, typesMetadata[component.id], childrenMetadata[component.id])
     ))
+    console.log("Check types took " + (new Date().getTime() - start) + "ms")
   }
 
+  const lastTrees: Record<string, IdentifiableBeagleUIElement> = {};
+
   function doPartialRender(
-    viewTree: IdentifiableBeagleUIElement<any>,
+    updatedElement: IdentifiableBeagleUIElement<any>,
     anchor = '',
     mode: TreeUpdateMode = 'replaceComponent',
   ) {
-    takeViewSnapshot(viewTree, anchor, mode)
-    let view = beagleView.getTree() as IdentifiableBeagleUIElement
+    let start = new Date().getTime()
 
-    /* Next we are going to reprocess the entire tree. We're doing this because we need to guarantee
-    that every action or expression will be correctly parsed. But, considering the occasions we'll
-    be updating just a part of the tree, can't we store the last processed tree and use it instead
-    of processing everything again? Todo: study this performance enhancement. */
+    takeViewSnapshot(updatedElement, anchor, mode)
+    let cachedView = beagleView.getTree() as IdentifiableBeagleUIElement
 
-    view = runLifecycle(view, 'afterViewSnapshot')
-    view = evaluateComponents(view)
-    view = runLifecycle(view, 'beforeRender')
-    checkTypes(view)
+    cachedView = runLifecycle(cachedView, 'afterViewSnapshot')
+    cachedView = evaluateComponents(cachedView)
+    cachedView = runLifecycle(cachedView, 'beforeRender')
+    checkTypes(cachedView)
 
-    renderToScreen(view)
+    renderToScreen(cachedView)
+    lastTrees[cachedView.id] = cachedView
+
+    console.log("Partial render took " + (new Date().getTime() - start) + "ms")
   }
 
   function doFullRender(
@@ -172,10 +194,14 @@ function createRenderer({
     anchor = '',
     mode: TreeUpdateMode = 'replaceComponent',
   ) {
+    let start = new Date().getTime()
     viewTree = runLifecycle(viewTree, 'beforeStart')
 
     let viewTreeWithIds = preProcess(viewTree)
     viewTreeWithIds = runLifecycle(viewTreeWithIds, 'beforeViewSnapshot')
+
+    let end = new Date().getTime()
+    console.log("Full render took " + (end - start) + "ms")
 
     doPartialRender(viewTreeWithIds, anchor, mode)
   }
@@ -187,6 +213,8 @@ function createRenderer({
     componentManager?: ComponentManager,
     mode: TreeInsertionMode = 'replace',
   ) {
+    let start = new Date().getTime()
+
     if (!Array.isArray(contexts)) return
     if (!templateManager.default && (!templateManager.templates || templateManager.templates.length === 0)) {
       return logger.error(`Beagle can't do the template rendering at the node ${anchor} because it couldn't find any template to use. Please provide at least one template to the templateManager parameter.`)
@@ -205,7 +233,7 @@ function createRenderer({
 
     const beagleService = beagleView.getBeagleService()
     const extraContexts = [beagleService.globalContext.getAsDataContext(), ...beagleView.getLocalContexts().getAllAsDataContext()]
-    const treeContextHierarchy = getTreeContextHierarchy(uiTree, extraContexts) || []
+    const treeContextHierarchy = getTreeContextHierarchy(anchorElement, extraContexts) || []
     const contextTemplates: IdentifiableBeagleUIElement[] = []
     const insertion = {
       prepend: (children: IdentifiableBeagleUIElement[]) => [...children?.reverse() || [], ...anchorElement.children || []],
@@ -228,6 +256,10 @@ function createRenderer({
     })
 
     anchorElement.children = insertion[mode] ? insertion[mode](contextTemplates) : insertion.replace(contextTemplates)
+
+    let end = new Date().getTime()
+    console.log("Template render took " + (end - start) + "ms")
+
     doFullRender(anchorElement, anchor)
   }
 

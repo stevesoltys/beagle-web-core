@@ -1,5 +1,5 @@
 {
-  "name": "@zup-it/beagle-web",
+  "name": "beagle-web",
   "version": "2.0.0",
   "main": "index.js",
   "types": "index.d.ts",
